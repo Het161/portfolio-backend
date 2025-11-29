@@ -1,12 +1,10 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import os
 from dotenv import load_dotenv
 import logging
+import httpx  # For HTTP requests to Resend API
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +20,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# ✅ FIXED: Comprehensive CORS Configuration
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -39,13 +37,13 @@ app.add_middleware(
     max_age=3600,
 )
 
-# ========== MODELS ==========
+# Models
 class ContactForm(BaseModel):
     name: str
     email: EmailStr
     message: str
 
-# ========== ROUTES ==========
+# Routes
 @app.get("/")
 def read_root():
     return {
@@ -65,123 +63,86 @@ def health_check():
 @app.post("/api/contact")
 async def contact_form(form_data: ContactForm, request: Request):
     """
-    Handle contact form submissions with comprehensive error handling
+    Handle contact form submissions using Resend API
     """
     try:
-        # Log incoming request
         logger.info(f"📧 Contact form submission from: {form_data.name} ({form_data.email})")
         
-        # Get email credentials
-        EMAIL_USER = os.getenv("EMAIL_USER")
-        EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+        # Get Resend API key
+        RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+        TO_EMAIL = os.getenv("TO_EMAIL", "hetpatelsk@gmail.com")
         
-        # Validate credentials exist
-        if not EMAIL_USER or not EMAIL_PASSWORD:
-            logger.error("❌ Email configuration missing")
+        if not RESEND_API_KEY:
+            logger.error("❌ Resend API key not found")
             raise HTTPException(
                 status_code=500,
                 detail="Email service not configured"
             )
         
-        logger.info(f"✅ Email credentials found for: {EMAIL_USER}")
+        logger.info(f"✅ Resend API key found")
+        logger.info(f"📬 Sending to: {TO_EMAIL}")
         
-        # Create email message
-        msg = MIMEMultipart('alternative')
-        msg['From'] = EMAIL_USER
-        msg['To'] = EMAIL_USER
-        msg['Subject'] = f"Portfolio Contact: {form_data.name}"
-        msg['Reply-To'] = form_data.email
-        
-        # Email body (plain text)
-        text_body = f"""
-New Contact Form Submission
-
-From: {form_data.name}
-Email: {form_data.email}
-
-Message:
-{form_data.message}
-
----
-Sent from buildbyhet.me
-Reply directly to this email to respond to {form_data.name}
-"""
-        
-        # Email body (HTML)
-        html_body = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-        <h2 style="color: #0066cc; border-bottom: 2px solid #0066cc; padding-bottom: 10px;">
-            New Portfolio Contact
-        </h2>
-        
-        <div style="margin: 20px 0;">
-            <p><strong>From:</strong> {form_data.name}</p>
-            <p><strong>Email:</strong> <a href="mailto:{form_data.email}">{form_data.email}</a></p>
-        </div>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0;">Message:</h3>
-            <p style="white-space: pre-wrap;">{form_data.message}</p>
-        </div>
-        
-        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666;">
-            <p>Sent from <a href="https://buildbyhet.me">buildbyhet.me</a></p>
-            <p>Reply directly to this email to respond to {form_data.name}</p>
-        </div>
-    </div>
-</body>
-</html>
-"""
-        
-        # Attach both plain text and HTML
-        part1 = MIMEText(text_body, 'plain')
-        part2 = MIMEText(html_body, 'html')
-        msg.attach(part1)
-        msg.attach(part2)
-        
-        # Send email with timeout and error handling
-        logger.info("📤 Connecting to Gmail SMTP...")
-        
-        try:
-            with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as server:
-                server.set_debuglevel(0)  # Disable debug output
-                logger.info("🔐 Starting TLS...")
-                server.starttls()
+        # Create email content
+        html_content = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                <h2 style="color: #0066cc; border-bottom: 2px solid #0066cc; padding-bottom: 10px;">
+                    New Portfolio Contact
+                </h2>
                 
-                logger.info("🔑 Authenticating...")
-                server.login(EMAIL_USER, EMAIL_PASSWORD)
+                <div style="margin: 20px 0;">
+                    <p><strong>From:</strong> {form_data.name}</p>
+                    <p><strong>Email:</strong> <a href="mailto:{form_data.email}">{form_data.email}</a></p>
+                </div>
                 
-                logger.info("📨 Sending email...")
-                server.send_message(msg)
+                <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                    <h3 style="margin-top: 0;">Message:</h3>
+                    <p style="white-space: pre-wrap;">{form_data.message}</p>
+                </div>
                 
-                logger.info("✅ Email sent successfully!")
-            
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666;">
+                    <p>Sent from <a href="https://buildbyhet.me">buildbyhet.me</a></p>
+                    <p>Reply directly to this email to respond to {form_data.name}</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Send email using Resend API
+        logger.info("📤 Sending email via Resend API...")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": "Portfolio <onboarding@resend.dev>",  # Resend's test email
+                    "to": [TO_EMAIL],
+                    "reply_to": form_data.email,
+                    "subject": f"Portfolio Contact: {form_data.name}",
+                    "html": html_content,
+                },
+                timeout=10.0,
+            )
+        
+        if response.status_code == 200:
+            logger.info("✅ Email sent successfully via Resend!")
             return {
                 "success": True,
                 "message": "Email sent successfully",
                 "from": form_data.name,
-                "to": EMAIL_USER
+                "to": TO_EMAIL
             }
-            
-        except smtplib.SMTPAuthenticationError as e:
-            logger.error(f"❌ SMTP Authentication failed: {str(e)}")
+        else:
+            logger.error(f"❌ Resend API error: {response.status_code} - {response.text}")
             raise HTTPException(
                 status_code=500,
-                detail="Email authentication failed. Please contact admin."
-            )
-        except smtplib.SMTPException as e:
-            logger.error(f"❌ SMTP Error: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to send email: {str(e)}"
-            )
-        except Exception as e:
-            logger.error(f"❌ Unexpected error during email send: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Unexpected error: {str(e)}"
+                detail=f"Failed to send email: {response.text}"
             )
             
     except HTTPException:
@@ -193,12 +154,12 @@ Reply directly to this email to respond to {form_data.name}
             detail=f"Server error: {str(e)}"
         )
 
-# ========== STARTUP EVENT ==========
+# Startup event
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Portfolio API started successfully!")
-    logger.info(f"📧 Email configured: {bool(os.getenv('EMAIL_USER'))}")
-    logger.info(f"🔑 Password configured: {bool(os.getenv('EMAIL_PASSWORD'))}")
+    logger.info(f"📧 Resend API configured: {bool(os.getenv('RESEND_API_KEY'))}")
+    logger.info(f"📬 Emails will be sent to: {os.getenv('TO_EMAIL', 'hetpatelsk@gmail.com')}")
 
 if __name__ == "__main__":
     import uvicorn
